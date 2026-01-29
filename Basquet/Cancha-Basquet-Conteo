@@ -1,0 +1,200 @@
+// ==============================
+// DEFINICIÓN DE SENSORES IR
+// ==============================
+
+// Sensor IR del equipo Visitante
+const int sensorV = 2;
+
+// Sensor IR del equipo Local
+const int sensorL = 3;
+
+// Estados anteriores de los sensores (INPUT_PULLUP → reposo en HIGH)
+bool estadoAntV = HIGH; 
+bool estadoAntL = HIGH;
+
+
+// ==============================
+// DEFINICIÓN DE BOTONES
+// ==============================
+
+// Botón para sumar puntos al Visitante
+const int botonVsum = 4;
+
+// Botón para restar puntos al Visitante
+const int botonVrest = 5;
+
+// Botón para reiniciar el marcador
+const int botonReiniciar = 6;
+
+// Botón para sumar puntos al Local
+const int botonLsum = 7;
+
+// Botón para restar puntos al Local
+const int botonLrest = 8;
+
+
+// ==============================
+// ANTIRREBOTE DE BOTONES
+// ==============================
+
+// Estado actual estable de cada botón
+bool estadoBoton[5] = {0,0,0,0,0};
+
+// Último estado leído (para detectar cambios)
+bool ultimoEstado[5] = {0,0,0,0,0};
+
+// Tiempo del último cambio detectado
+unsigned long ultimoDebounce[5] = {0,0,0,0,0};
+
+// Tiempo mínimo para validar una pulsación (ms)
+const unsigned long debounceDelay = 50;
+
+
+// ==============================
+// MATRIZ DE NÚMEROS (0–9) EN FORMATO 8x4
+// ==============================
+// Cada número ocupa 8 filas x 4 columnas
+byte numeros[10][8][4] = {
+  { {1,1,1,1},{1,0,0,1},{1,0,0,1},{1,0,0,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{0,0,0,0} }, // 0
+  { {0,1,0,0},{1,1,0,0},{0,1,0,0},{0,1,0,0},{0,1,0,0},{0,1,0,0},{1,1,1,0},{0,0,0,0} }, // 1
+  { {1,1,1,1},{0,0,0,1},{0,0,0,1},{1,1,1,1},{1,0,0,0},{1,0,0,0},{1,1,1,1},{0,0,0,0} }, // 2
+  { {1,1,1,1},{0,0,0,1},{0,0,0,1},{0,1,1,1},{0,0,0,1},{0,0,0,1},{1,1,1,1},{0,0,0,0} }, // 3
+  { {1,0,0,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,0} }, // 4
+  { {1,1,1,1},{1,0,0,0},{1,0,0,0},{1,1,1,1},{0,0,0,1},{0,0,0,1},{1,1,1,1},{0,0,0,0} }, // 5
+  { {1,1,1,1},{1,0,0,0},{1,0,0,0},{1,1,1,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{0,0,0,0} }, // 6
+  { {1,1,1,1},{0,0,0,1},{0,0,1,0},{0,1,0,0},{0,1,0,0},{0,1,0,0},{0,1,0,0},{0,0,0,0} }, // 7
+  { {1,1,1,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{0,0,0,0} }, // 8
+  { {1,1,1,1},{1,0,0,1},{1,0,0,1},{1,1,1,1},{0,0,0,1},{0,0,0,1},{1,1,1,1},{0,0,0,0} }  // 9
+};
+
+
+// ==============================
+// FUNCIÓN PARA DIBUJAR UN NÚMERO
+// ==============================
+// numero → dígito a mostrar (0–9)
+// columnaInicio → posición horizontal (0 o 4)
+void dibujarNumero(int numero, int columnaInicio){
+  for(int f = 0; f < 8; f++){
+    for(int c = 0; c < 4; c++){
+      pantalla.setLed(0, f, c + columnaInicio, numeros[numero][f][c]);
+    }
+  }
+}
+
+
+// ==============================
+// LECTURA DE BOTONES CON ANTIRREBOTE
+// ==============================
+int leerBoton(int pin, int index){
+  int lectura = digitalRead(pin);
+
+  // Detectar cambio de estado
+  if(lectura != ultimoEstado[index]){
+    ultimoDebounce[index] = millis();
+  }
+
+  // Confirmar que el cambio sea estable
+  if((millis() - ultimoDebounce[index]) > debounceDelay){
+    if(lectura != estadoBoton[index]){
+      estadoBoton[index] = lectura;
+
+      // Botón presionado (LOW por INPUT_PULLUP)
+      if(estadoBoton[index] == LOW) return 1;
+    }
+  }
+
+  ultimoEstado[index] = lectura;
+  return 0;
+}
+
+
+// ==============================
+// ACTUALIZAR TODA LA MATRIZ LED
+// ==============================
+void actualizarMatriz(){
+  pantalla.borrar();
+  dibujarNumero(puntosV, 0); // Visitante (izquierda)
+  dibujarNumero(puntosL, 4); // Local (derecha)
+}
+
+
+// ==============================
+// CONFIGURACIÓN INICIAL
+// ==============================
+void setup(){
+  pantalla.begin(12, 11, 10, 1);
+  pantalla.setIntensidad(10);
+  pantalla.borrar();
+
+  // Sensores IR
+  pinMode(sensorV, INPUT_PULLUP);
+  pinMode(sensorL, INPUT_PULLUP);
+
+  // Botones
+  pinMode(botonVsum, INPUT_PULLUP);
+  pinMode(botonVrest, INPUT_PULLUP);
+  pinMode(botonReiniciar, INPUT_PULLUP);
+  pinMode(botonLsum, INPUT_PULLUP);
+  pinMode(botonLrest, INPUT_PULLUP);
+
+  actualizarMatriz();
+}
+
+
+// ==============================
+// BUCLE PRINCIPAL
+// ==============================
+void loop(){
+  bool cambio = false;
+
+  // ---------- BOTONES ----------
+  if(leerBoton(botonVsum,0)){
+    puntosV = min(puntosV + 1, 9);
+    cambio = true;
+  }
+
+  if(leerBoton(botonVrest,1)){
+    puntosV = max(puntosV - 1, 0);
+    cambio = true;
+  }
+
+  if(leerBoton(botonReiniciar,2)){
+    puntosV = 0;
+    puntosL = 0;
+    cambio = true;
+  }
+
+  if(leerBoton(botonLsum,3)){
+    puntosL = min(puntosL + 1, 9);
+    cambio = true;
+  }
+
+  if(leerBoton(botonLrest,4)){
+    puntosL = max(puntosL - 1, 0);
+    cambio = true;
+  }
+
+  // ---------- SENSORES IR ----------
+  // Visitante
+  bool estadoActV = digitalRead(sensorV);
+  if(estadoAntV == HIGH && estadoActV == LOW){
+    puntosV = min(puntosV + 2, 9);
+    cambio = true;
+  }
+  estadoAntV = estadoActV;
+
+  // Local
+  bool estadoActL = digitalRead(sensorL);
+  if(estadoAntL == HIGH && estadoActL == LOW){
+    puntosL = min(puntosL + 2, 9);
+    cambio = true;
+  }
+  estadoAntL = estadoActL;
+
+  // Actualizar pantalla solo si hubo cambios
+  if(cambio){
+    actualizarMatriz();
+  }
+
+  delay(20);
+}
