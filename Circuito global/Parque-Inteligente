@@ -1,0 +1,186 @@
+// ==============================
+// LIBRERÍAS
+// ==============================
+#include <Wire.h>                 // Comunicación I2C
+#include <LiquidCrystal_I2C.h>    // LCD I2C
+#include <DHT.h>                  // Sensor DHT11
+
+
+// ==============================
+// 1. DEFINICIÓN DE PINES
+// ==============================
+
+// Sensores infrarrojos del parqueadero
+#define PIN_IR_ENTRADA     7       // Detecta vehículo entrando
+#define PIN_IR_SALIDA      8       // Detecta vehículo saliendo
+
+// Servomotores de barreras
+#define PIN_SERVO_ENT      53      // Servo de entrada
+#define PIN_SERVO_SAL      52      // Servo de salida
+
+// LEDs indicadores del sistema de riego/clima
+#define PINLED_TEMPERATURA 11      // LED rojo: temperatura fuera de rango
+#define PINLED_HUMEDADS    12      // LED verde: humedad/clima correcto
+#define PINLED_RIEGO       13      // LED azul: bomba de riego activa
+
+// Sensores ambientales
+#define PIN_DHT            10      // Sensor DHT11 (temperatura)
+#define PIN_SUELO          A0      // Sensor de humedad del suelo
+
+
+// ==============================
+// 2. CONSTANTES DEL SISTEMA
+// ==============================
+
+// Tipo de sensor DHT
+#define DHT_TYPE           DHT11
+
+// Capacidad máxima del parqueadero
+#define CUPOS_TOTALES      7   
+
+// Rangos de temperatura (°C)
+#define TEMP_MAXIMA        28.0    // Máximo permitido
+#define TEMP_MINIMA        18.0    // Mínimo permitido
+#define TEMP_IDEAL_INF     19.0    // Inicio rango ideal
+#define TEMP_IDEAL_SUP     27.0    // Fin rango ideal
+
+// Umbral mínimo de humedad del suelo para activar riego (%)
+#define UMBRAL_HUMEDAD_MIN 40 
+
+
+// ==============================
+// OBJETOS
+// ==============================
+
+// Pantalla LCD 16x2 con dirección I2C 0x27
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Sensor DHT
+DHT dht(PIN_DHT, DHT_TYPE);
+
+
+// ==============================
+// 3. VARIABLES GLOBALES
+// ==============================
+
+// Cupos disponibles en el parqueadero
+int cuposLibres = CUPOS_TOTALES;
+
+// Lectura de temperatura
+float temperatura = 0.0;
+
+// Humedad del suelo en porcentaje
+int porcentajeHumedadSuelo = 0;
+
+// Estado de la bomba de riego
+bool bombaActiva = false;
+
+// Control de envío periódico de datos al ESP32
+unsigned long ultimoEnvio = 0;
+const unsigned long intervaloEnvio = 15000; // 15 segundos
+
+
+// ==============================
+// CONFIGURACIÓN INICIAL
+// ==============================
+void setup() {
+  Serial.begin(9600);   // Monitor serial (PC)
+  Serial1.begin(9600);  // Comunicación con ESP32
+  
+  lcd.init();           // Inicializa LCD
+  lcd.backlight();      // Enciende retroiluminación
+  dht.begin();          // Inicializa DHT11
+  
+  // Sensores IR
+  pinMode(PIN_IR_ENTRADA, INPUT);
+  pinMode(PIN_IR_SALIDA, INPUT);
+  
+  // LEDs
+  pinMode(PINLED_TEMPERATURA, OUTPUT);
+  pinMode(PINLED_HUMEDADS, OUTPUT);
+  pinMode(PINLED_RIEGO, OUTPUT);
+
+  // Mensaje inicial
+  lcd.setCursor(0,0);
+  lcd.print(" SISTEMA PARKING");
+  lcd.setCursor(0,1);
+  lcd.print("   ACTUALIZADO  ");
+  delay(2000);
+  lcd.clear();
+}
+
+
+// ==============================
+// BUCLE PRINCIPAL
+// ==============================
+void loop() {
+
+  gestionarRiego();        // Control del riego y LEDs
+  gestionarParqueadero(); // Control de cupos y barreras
+  
+  // Envío periódico de datos al ESP32
+  if (millis() - ultimoEnvio >= intervaloEnvio) {
+    comunicarESP32();
+    ultimoEnvio = millis();
+  }
+  
+  delay(50); // Pequeña pausa para estabilidad
+}
+
+
+// ==============================
+// FUNCIÓN: GESTIÓN DEL PARQUEADERO
+// ==============================
+void gestionarParqueadero() {
+
+  // Mostrar cupos disponibles
+  lcd.setCursor(0, 0);
+  lcd.print("CUPOS: " + String(cuposLibres));
+
+  // ---------- ENTRADA ----------
+  if (digitalRead(PIN_IR_ENTRADA) == LOW && cuposLibres > 0) {
+    servoEntrada.attach(PIN_SERVO_ENT); // Activar servo
+    servoEntrada.write(0);              // Abrir barrera
+    delay(2500); 
+    servoEntrada.write(90);             // Cerrar barrera
+    delay(500);
+    servoEntrada.detach();              // Liberar pin
+    cuposLibres--;                      // Disminuir cupos
+  }
+
+  // ---------- SALIDA ----------
+  if (digitalRead(PIN_IR_SALIDA) == LOW && cuposLibres < CUPOS_TOTALES) {
+    servoSalida.attach(PIN_SERVO_SAL);
+    servoSalida.write(90);              // Abrir barrera
+    delay(2500); 
+    servoSalida.write(0);               // Cerrar barrera
+    delay(500);
+    servoSalida.detach();
+    cuposLibres++;                      // Aumentar cupos
+  }
+}
+
+
+// ==============================
+// FUNCIÓN: GESTIÓN DE RIEGO
+// ==============================
+void gestionarRiego() {
+
+  // Leer temperatura ambiente
+  temperatura = dht.readTemperature();
+
+  // Leer humedad del suelo
+  int lecturaAnalogica = analogRead(PIN_SUELO);
+  
+  // Convertir lectura a porcentaje
+  porcentajeHumedadSuelo = map(lecturaAnalogica, 1023, 0, 0, 100);
+  porcentajeHumedadSuelo = constrain(porcentajeHumedadSuelo, 0, 100);
+
+  // ---------- 1. TEMPERATURA FUERA DE RANGO ----------
+  if (temperatura > TEMP_MAXIMA || temperatura < TEMP_MINIMA) {
+    digitalWrite(PIN_RELE_BOMBA, HIGH);   // Apagar bomba
+    bombaActiva = false;
+    digitalWrite(PINLED_TEMPERATURA, HIGH); // LED rojo
+    digitalWrite(PINLED_RIEGO, LOW);
+    digitalWrite(PINLED_HUMEDADS, LOW);
+  } 
