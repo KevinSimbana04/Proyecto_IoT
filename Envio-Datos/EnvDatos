@@ -1,0 +1,117 @@
+// ==============================
+// LIBRERÍAS
+// ==============================
+#include <WiFi.h>          // Conexión WiFi para ESP32
+#include "ThingSpeak.h"   // Plataforma IoT ThingSpeak
+
+
+// ==============================
+// CONFIGURACIÓN WIFI Y THINGSPEAK
+// ==============================
+
+// Credenciales de la red WiFi
+const char* ssid = "CAMPUS_EPN";
+const char* password = "politecnica**";
+
+// Datos del canal ThingSpeak
+unsigned long channelID = 3242545;          // ID del canal
+const char* WriteAPIKey = "ETO28M1V6RWZYWDX"; // Clave de escritura
+
+// Cliente WiFi para ThingSpeak
+WiFiClient client;
+
+
+// ==============================
+// CONFIGURACIÓN INICIAL
+// ==============================
+void setup() {
+
+  Serial.begin(115200); 
+  // Comunicación serial con Arduino
+  // RX = GPIO16, TX = GPIO17
+  Serial2.begin(9600, SERIAL_8N1, 16, 17); 
+  
+  // Conexión a la red WiFi
+  WiFi.begin(ssid, password);
+
+  // Esperar hasta conectarse
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi Conectado");
+
+  // Inicializar ThingSpeak
+  ThingSpeak.begin(client);
+}
+
+
+// ==============================
+// BUCLE PRINCIPAL
+// ==============================
+void loop() {
+
+  // Verificar si Arduino envió datos
+  if (Serial2.available()) {
+
+    // Leer línea completa enviada por Arduino
+    // Formato esperado: "temp,cupos,humedad,bomba"
+    String data = Serial2.readStringUntil('\n');
+    Serial.println("Dato recibido: " + data);
+
+
+    // ==============================
+    // PARSING (Separación de datos)
+    // ==============================
+
+    // -------- 1. TEMPERATURA --------
+    int coma1 = data.indexOf(',');
+    float temp = data.substring(0, coma1).toFloat();
+    
+    // -------- 2. CUPOS DEL PARQUEADERO --------
+    int coma2 = data.indexOf(',', coma1 + 1);
+    int cupos = data.substring(coma1 + 1, coma2).toInt();
+    
+    // -------- 3. HUMEDAD DEL SUELO --------
+    int coma3 = data.indexOf(',', coma2 + 1);
+    int humedad = data.substring(coma2 + 1, coma3).toInt();
+    
+    // -------- 4. ESTADO DE LA BOMBA --------
+    int bomba = data.substring(coma3 + 1).toInt();
+
+
+    // ==============================
+    // ASIGNACIÓN A THINGSPEAK
+    // ==============================
+
+    // Campo 1 → Temperatura
+    ThingSpeak.setField(1, temp);
+
+    // Campo 2 → Cupos disponibles
+    ThingSpeak.setField(2, cupos);
+
+    // Campo 3 → Humedad del suelo (%)
+    ThingSpeak.setField(3, humedad);
+
+    // Campo 4 → Estado de la bomba (0 = OFF, 1 = ON)
+    ThingSpeak.setField(4, bomba);
+
+
+    // ==============================
+    // ENVÍO A LA NUBE
+    // ==============================
+    int x = ThingSpeak.writeFields(channelID, WriteAPIKey);
+    
+    if (x == 200) {
+      Serial.println("Sincronización Exitosa:");
+      Serial.printf(
+        "T: %.2f °C | C: %d | H: %d%% | B: %d\n",
+        temp, cupos, humedad, bomba
+      );
+    } 
+    else {
+      Serial.println("Error en ThingSpeak: " + String(x));
+    }
+  }
+}
